@@ -1,0 +1,13 @@
+VOCES DE «LA ESTRELLA DE BOLICHE»
+
+Pon aquí los 32 audios de ElevenLabs, en .mp3 y con el nombre EXACTO de la columna «Archivo» del Excel
+voces-estrella-boliche.xlsx (todo en minúsculas), por ejemplo:
+
+  boliche-hola.mp3
+  oruga-hola.mp3
+  conejito-voy.mp3
+
+Si falta algún audio, el juego usa la voz del navegador para esa frase, así que puedes ir subiéndolos poco a poco.
+Si cambias el texto de una frase, avísame para cambiarlo también en el juego (tiene que coincidir).
+
+La canción va en la carpeta principal con el nombre cancion-estrella-boliche.mp3 (ya está puesta).
