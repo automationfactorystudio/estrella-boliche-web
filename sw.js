@@ -1,6 +1,6 @@
 /* Service worker · La estrella de Boliche
    Al actualizar el juego, sube el número de VERSION para que los móviles reciban los cambios. */
-const VERSION = 'estrella-v1';
+const VERSION = 'estrella-v2';
 const CORE = ['./', 'index.html', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png', 'icon-maskable-512.png', 'apple-touch-icon.png', 'logo-tigalma.png',
   'https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js',
   'https://cdn.jsdelivr.net/npm/three@0.165.0/build/three.module.js',
@@ -13,7 +13,6 @@ self.addEventListener('install', e => {
     const c = await caches.open(VERSION);
     await Promise.all(CORE.map(u => c.add(u).catch(() => {})));       // lo imprescindible
     await Promise.all(VOICES.map(u => c.add(u).catch(() => {})));      // las voces, sin que un fallo rompa la instalación
-    await c.add(SONG).catch(() => {});                                  // la canción
     self.skipWaiting();
   })());
 });
@@ -32,6 +31,7 @@ self.addEventListener('fetch', e => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (!/^https?:$/.test(url.protocol)) return;
+  if (url.pathname.endsWith(SONG)) return;                              // la canción (4,6 MB) la gestiona el navegador directamente
   e.respondWith((async () => {
     const cache = await caches.open(VERSION);
     const hit = await cache.match(req, { ignoreSearch: true, ignoreVary: true });

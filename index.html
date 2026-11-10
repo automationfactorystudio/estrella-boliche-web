@@ -561,7 +561,7 @@ function init(){
   const SONG = (() => {
     const a = new Audio(); a.preload = 'none'; a.src = 'cancion-estrella-boliche.mp3';
     let endAt = 0, playing = false, fadeT = null, failed = false, unlocked = false;
-    a.addEventListener('error', () => { failed = true; playing = false; SND.songDuck(false); });
+    a.addEventListener('error', () => { playing = false; SND.songDuck(false); });
     a.addEventListener('ended', () => { playing = false; SND.songDuck(false); });
     a.addEventListener('timeupdate', () => { if (playing && endAt && a.currentTime >= endAt) stop(); });
     function fade(to, ms, then){ clearInterval(fadeT); const from = a.volume, t0 = performance.now(); fadeT = setInterval(() => { const k = Math.min(1, (performance.now() - t0) / ms); try { a.volume = from + (to - from) * k; } catch (e) {} if (k >= 1){ clearInterval(fadeT); if (then) then(); } }, 40); }
@@ -574,9 +574,10 @@ function init(){
       if (a.readyState >= 1) go(); else { a.addEventListener('loadedmetadata', go, { once: true }); a.load(); }
       return true;
     }
+    function retry(from){ if (!playing) return; try { a.src = 'cancion-estrella-boliche.mp3?r=' + Date.now(); a.preload = 'auto'; a.muted = false; a.addEventListener('loadedmetadata', () => { if (!playing) return; seek(from); try { a.volume = 1; } catch (e) {} const p = a.play(); if (p && p.catch) p.catch(() => {}); }, { once: true }); a.load(); } catch (e) {} }
     function stop(){ if (!playing) return; playing = false; SND.songDuck(false); fade(0, 600, () => a.pause()); }
     SND.onToggle(on => { if (on) unlock(); else if (playing){ playing = false; SND.songDuck(false); a.pause(); } });
-    return { play, stop, time: () => a.currentTime, playing: () => playing && !a.paused && a.readyState >= 2, active: () => playing, failed: () => failed };
+    return { play, stop, retry, time: () => a.currentTime, playing: () => playing && !a.paused && a.readyState >= 2, active: () => playing, failed: () => failed };
   })();
   const LYRICS = [
     [4, 'Una noche en el bosque todo estaba en calma ya.'], [11, 'Boliche miró hacia el cielo,'], [17, 'una estrella vio brillar.'],
@@ -1446,12 +1447,14 @@ function init(){
   }
   function flyBadge(idx, then){
     const src = playCard.querySelector('.badge'), dst = starEls[idx] && starEls[idx].querySelector('.st');
-    if (RM || !src || !dst){ award(idx); then(); return; }
+    // el cambio de escena siempre va envuelto en fadeSwap: framing(...,0.01) es un corte
+    // de cámara instantáneo, y sin el fundido a negro se ve un parpadeo de la siguiente escena
+    if (RM || !src || !dst){ award(idx); fadeSwap(then); return; }
     const a = src.getBoundingClientRect(), d = dst.getBoundingClientRect(), fly = document.createElement('div');
     fly.className = 'badge-fly'; fly.innerHTML = badgeSVG(idx); fly.style.cssText = `left:${a.left}px;top:${a.top}px;width:${a.width}px;height:${a.height}px`; document.body.appendChild(fly);
     const dx = d.left + d.width / 2 - (a.left + a.width / 2), dy = d.top + d.height / 2 - (a.top + a.height / 2), k = d.width / a.width;
     gsap.timeline({ onComplete(){ fly.remove(); award(idx); } }).to(fly, { y: -30, scale: 1.15, duration: 0.25, ease: 'power2.out' }).to(fly, { x: dx, y: dy, scale: k, duration: 0.75, ease: 'power2.inOut' });
-    SND.whoosh(); setTimeout(then, 1250);
+    SND.whoosh(); setTimeout(() => fadeSwap(then), 1250);
   }
   function celebrate(idx, title, then){
     stopIdle(); hideCelebStar();
@@ -1507,7 +1510,7 @@ function init(){
   function story(fn){ const tok = ++sceneToken; panelToken++; Promise.resolve().then(() => fn(tok)).catch(e => { if (e !== CANCEL) console.warn(e); }); return tok; }
   // tocar cosas de la escena: el dedo vale si cae cerca (en pantalla) de algo pendiente
   let tapKey = null;
-  function tapTargets(tok, targets, { text = '', dots = true, radius = 100, helpLine = true } = {}){
+  function tapTargets(tok, targets, { text = '', dots = true, radius = 100, helpLine = true, sequential = false } = {}){
     return new Promise(res => {
       let got = 0, last = performance.now(), helped = false, fin = false; const n = targets.length;
       hint(text, dots && n > 1 ? n : 0, 0);
@@ -1515,8 +1518,11 @@ function init(){
       const hit = (t) => { if (fin) return; t.done = true; got++; hintCount(got); last = performance.now(); t.onHit(got); if (got >= n) finish(); };
       const handler = (e) => {
         if (tok !== sceneToken) return cleanup();
+        // en modo secuencial solo el siguiente objetivo pendiente puede recibir el toque,
+        // así cada toque va al montón correcto aunque estén muy juntos en pantalla
+        const pool = sequential ? left().slice(0, 1) : left();
         let best = null, bd = 1e9;
-        for (const t of left()){ const s = toScreen(t.pos()); if (s.z > 1) continue; const d = Math.hypot(s.x - e.clientX, s.y - e.clientY); if (d < bd){ bd = d; best = t; } }
+        for (const t of pool){ const s = toScreen(t.pos()); if (s.z > 1) continue; const d = Math.hypot(s.x - e.clientX, s.y - e.clientY); if (d < bd){ bd = d; best = t; } }
         if (best && bd < radius * (PROFILE.mobile ? 1.2 : 1) + (best.r || 0)) hit(best);
       };
       function cleanup(){ canvas.removeEventListener('pointerdown', handler); clearInterval(timer); tapKey = null; }
@@ -1536,7 +1542,7 @@ function init(){
   // la canción con la letra en pantalla
   async function sing(check, from, to){
     const usingAudio = SONG.play(from, to);
-    const t0 = performance.now(), speed = usingAudio ? 1 : 1.7; let idx = -1, started = false;
+    const t0 = performance.now(), speed = usingAudio ? 1 : 1.7; let idx = -1, started = false, retried = false;
     subsEl.classList.add('song');
     try {
       while (true){
@@ -1544,6 +1550,11 @@ function init(){
         if (document.hidden) continue;
         const playing = SONG.playing(); if (playing) started = true;
         const el = (performance.now() - t0) / 1000;
+        if (usingAudio && !started){   // la letra espera a que el audio suene de verdad
+          if (el > 5 && !retried){ retried = true; SONG.retry(from); }
+          if (el > 14){ caption('🎵 La estrella de Boliche', 'No he podido cargar la canción. Revisa tu conexión y vuelve a probar.', '#FFC94A', 0); live.textContent = 'No se pudo cargar la canción'; await wait(3); break; }
+          continue;
+        }
         const now = playing ? SONG.time() : from + el * speed;
         let k = -1; for (let i = 0; i < LYRICS.length; i++) if (LYRICS[i][0] <= now + 0.3 && LYRICS[i][0] >= from - 0.6) k = i;
         if (k !== idx && k >= 0){ idx = k; caption('🎵 La estrella de Boliche', LYRICS[k][1], '#FFC94A', 0); subsEl.classList.add('song'); live.textContent = LYRICS[k][1]; }
@@ -1575,6 +1586,9 @@ function init(){
   function enter(name, opts = {}){
     resetWorld();
     current = name;
+    // la tarjeta final se esconde ANTES de mostrar su panel y sin transición:
+    // si no, se ve entera un instante y luego se desvanece (el parpadeo de «una estrella para ti»)
+    if (name === 'final'){ finalCard.style.transition = 'none'; finalCard.classList.add('away'); void finalCard.offsetWidth; finalCard.style.transition = ''; }
     heroPanel.hidden = name !== 'hero'; finalPanel.hidden = name !== 'final';
     starsHud.hidden = name === 'hero'; bagHud.hidden = !['s3', 'cross', 's4', 's5'].includes(name);
     ({ hero: scHero, s1: sc1, s2: sc2, s3: sc3, cross: scCross, s4: sc4, s5: sc5, final: scFinal })[name](opts);
@@ -1755,9 +1769,13 @@ function init(){
       await pause(tok, 6.8);
       framing('gifts', 1.8);
       await pause(tok, 1.2);
-      await line(tok, boliche, 'Busca en la nieve: una flor, unas ramitas y una nuez.');
-      await tapTargets(tok, mounds.map(m => ({ pos: () => m.g.position.clone().add(new V3(0, 0.3, 0)), r: 30, nudge: () => { punch(m.m, 0.18, 0.5); SND.sparkle(); },
-        onHit(){ revealMound(tok, m); } })), { text: 'Toca la nieve que brilla' });
+      await line(tok, boliche, p === 'puente'
+        ? 'Busca en la nieve: una flor, unas ramitas y una nuez.'
+        : 'Las luces nos dan una pista: busca en la nieve, una cosa cada vez.');
+      // el puente deja tocar los montones en cualquier orden; el bosque de luces solo
+      // deja tocar el siguiente montón pendiente, así cada camino juega distinto
+      await tapTargets(tok, mounds.map(m => ({ pos: () => m.g.position.clone().add(new V3(0, 0.3, 0)), r: 24, nudge: () => { punch(m.m, 0.18, 0.5); SND.sparkle(); },
+        onHit(){ revealMound(tok, m); } })), { text: p === 'puente' ? 'Toca la nieve que brilla' : 'Toca la nieve, una a una', radius: 55, sequential: p !== 'puente' });
       await pause(tok, 1.6);
       await waitVoice(tok);
       setExpr(oruga, 'surprised');
